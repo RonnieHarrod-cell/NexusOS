@@ -19,14 +19,8 @@
 #define SERIAL_MODEM_COMMAND_PORT(base) (base + 4)
 #define SERIAL_LINE_STATUS_PORT(base) (base + 5)
 
-enum BaudRate
-{
-    Baud_115200 = 1,
-    Baud_57600,
-    Baud_19200,
-    Baud_9600
-};
-enum BaudRate divisor = Baud_115200;
+enum BaudRate { Baud_115200 = 1, Baud_57600, Baud_19200, Baud_9600 };
+extern enum BaudRate divisor;
 
 /* The I/O port commands */
 
