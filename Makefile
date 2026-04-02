@@ -2,14 +2,13 @@ CC = clang
 LD = ld.lld
 AS = nasm
 
-CFLAGS = -target x86_64-elf -ffreestanding -fno-stack-protector -mno-red-zone \
-         -nostdlib -mgeneral-regs-only
+CFLAGS = -target x86_64-elf -ffreestanding -fno-stack-protector -mno-red-zone -nostdlib -mgeneral-regs-only -fno-builtin
 
 LDFLAGS = -T linker.ld
 
 all: iso
 
-kernel.elf: boot.o main.o
+kernel.elf: boot.o main.o ata.o
 	$(LD) $(LDFLAGS) -o $@ $^
 
 boot.o:
@@ -17,6 +16,9 @@ boot.o:
 
 main.o:
 	$(CC) $(CFLAGS) -c kernel/main.c -o main.o
+
+ata.o:
+	$(CC) $(CFLAGS) -c kernel/ata.c -o ata.o
 
 iso: kernel.elf
 	mkdir -p iso/boot

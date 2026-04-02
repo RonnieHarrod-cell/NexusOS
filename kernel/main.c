@@ -1,6 +1,26 @@
 #include <stdint.h>
 #include "limine.h"
 #include "font.h"
+#include "ata.h"
+
+void shell_handle_key(char c);
+
+void *memset(void *s, int c, __SIZE_TYPE__ n)
+{
+    uint8_t *p = s;
+    while (n--)
+        *p++ = (uint8_t)c;
+    return s;
+}
+
+void *memcpy(void *dst, const void *src, __SIZE_TYPE__ n)
+{
+    uint8_t *d = dst;
+    const uint8_t *s = src;
+    while (n--)
+        *d++ = *s++;
+    return dst;
+}
 
 // ---------------------------------------------------------------------------
 // Framebuffer globals
@@ -204,7 +224,7 @@ __attribute__((interrupt)) static void keyboard_isr(struct interrupt_frame *fram
         {
             char c = scancode_map[scancode];
             if (c)
-                terminal_putchar(c);
+                shell_handle_key(c);
         }
     }
 
@@ -263,6 +283,24 @@ static void scroll(void)
 
 void terminal_putchar(char c)
 {
+    if (c == '\b')
+    {
+        // Move cursor back one character and erase
+        if (cursor_x >= CHAR_WIDTH)
+        {
+            cursor_x -= CHAR_WIDTH;
+        }
+        else if (cursor_y >= CHAR_HEIGHT)
+        {
+            cursor_y -= CHAR_HEIGHT;
+            cursor_x = (int)fb_width - CHAR_WIDTH;
+        }
+        // Draw a black square to erase the character
+        for (int row = 0; row < CHAR_HEIGHT; row++)
+            for (int col = 0; col < CHAR_WIDTH; col++)
+                put_pixel(cursor_x + col, cursor_y + row, 0x000000);
+        return;
+    }
     if (c == '\n')
     {
         cursor_x = 0;
@@ -270,7 +308,8 @@ void terminal_putchar(char c)
     }
     else
     {
-        if (c >= 'a' && c <= 'z') {
+        if (c >= 'a' && c <= 'z')
+        {
             c -= 32;
         }
         draw_char(cursor_x, cursor_y, c, 0xFFFFFF);
@@ -290,11 +329,15 @@ void terminal_putchar(char c)
     }
 }
 
-static void terminal_write(const char *str)
+void terminal_write(const char *str)
 {
     for (; *str; str++)
         terminal_putchar(*str);
 }
+
+#include "shell.h"
+
+uint64_t nexus_total_ram = 0;
 
 // ---------------------------------------------------------------------------
 // Kernel entry
@@ -306,6 +349,12 @@ void kmain(void)
     fb_width = fb_request.response->framebuffers[0]->width;
     fb_height = fb_request.response->framebuffers[0]->height;
     fb_pitch = fb_request.response->framebuffers[0]->pitch;
+
+    __attribute__((used, section(".limine_requests")))
+    static volatile struct limine_memmap_request memmap_request = {
+        .id = LIMINE_MEMMAP_REQUEST,
+        .revision = 0,
+    };
 
     // Clear screen
     for (uint32_t y = 0; y < fb_height; y++)
@@ -326,11 +375,16 @@ void kmain(void)
     load_idt();
     __asm__ volatile("sti");
 
-    terminal_write("--------------------\n");
+    if (memmap_request.response) {
+        for (uint64_t i = 0; i < memmap_request.response->entry_count; i++) {
+            struct limine_memmap_entry *e = memmap_request.response->entries[i];
+            if (e->type == LIMINE_MEMMAP_USABLE)
+                nexus_total_ram += e->length;
+        }
+    }
+
     terminal_write("NexusOS v0.1\n\n");
-    terminal_write("Hello, Ronnie!\n\n");
-    terminal_write("Type something:\n\n");
-    terminal_write("--------------------\n\n");
+    shell_init();
 
     while (1)
         __asm__ volatile("hlt");
