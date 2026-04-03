@@ -435,7 +435,7 @@ static void cmd_osinfo(void)
 {
     terminal_write("== NexusOS Information ==\n\n");
     terminal_write("OS Name:       NexusOS\n");
-    terminal_write("Version:       0.1.0\n");
+    terminal_write("Version:       0.2.0\n");
     terminal_write("Release date:  2026-04-02\n");
     terminal_write("Creator:       Ronnie Harrod\n");
     terminal_write("Architecture:  x86_64\n");

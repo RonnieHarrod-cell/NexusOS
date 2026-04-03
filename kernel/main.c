@@ -2,6 +2,7 @@
 #include "limine.h"
 #include "font.h"
 #include "auth.h"
+#include "splash.h"
 
 volatile char auth_key = 0;
 volatile int auth_key_ready = 0;
@@ -390,7 +391,9 @@ void kmain(void)
         }
     }
 
-    terminal_write("NexusOS v0.1\n\n");
+    splash_show();
+
+    terminal_write("NexusOS v0.2.0\n\n");
     auth_login();
     shell_init();
 
