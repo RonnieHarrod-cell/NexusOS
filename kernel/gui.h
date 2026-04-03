@@ -398,7 +398,7 @@ static void gui_draw_sysinfo(void)
     gui_text(SYS_X + SYS_W - 16, SYS_Y + 5, "x", COL_TEXT);
 
     int tx = SYS_X + 16, ty = SYS_Y + 28;
-    gui_text(tx, ty, "OS:    NEXUS V1.2.0", COL_TEXT);
+    gui_text(tx, ty, "OS:    NEXUS V0.3.0-alpha", COL_TEXT);
     gui_text(tx, ty + 18, "ARCH:  X86_64", COL_BLUE);
     gui_text(tx, ty + 36, "BOOT:  LIMINE V7", COL_TEXT);
 
