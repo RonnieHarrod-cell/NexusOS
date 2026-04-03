@@ -1,7 +1,10 @@
 #include <stdint.h>
 #include "limine.h"
 #include "font.h"
-#include "ata.h"
+#include "auth.h"
+
+volatile char auth_key = 0;
+volatile int auth_key_ready = 0;
 
 void shell_handle_key(char c);
 
@@ -224,7 +227,10 @@ __attribute__((interrupt)) static void keyboard_isr(struct interrupt_frame *fram
         {
             char c = scancode_map[scancode];
             if (c)
-                shell_handle_key(c);
+            {
+                auth_key = c;
+                auth_key_ready = 1;
+            }
         }
     }
 
@@ -350,8 +356,7 @@ void kmain(void)
     fb_height = fb_request.response->framebuffers[0]->height;
     fb_pitch = fb_request.response->framebuffers[0]->pitch;
 
-    __attribute__((used, section(".limine_requests")))
-    static volatile struct limine_memmap_request memmap_request = {
+    __attribute__((used, section(".limine_requests"))) static volatile struct limine_memmap_request memmap_request = {
         .id = LIMINE_MEMMAP_REQUEST,
         .revision = 0,
     };
@@ -375,8 +380,10 @@ void kmain(void)
     load_idt();
     __asm__ volatile("sti");
 
-    if (memmap_request.response) {
-        for (uint64_t i = 0; i < memmap_request.response->entry_count; i++) {
+    if (memmap_request.response)
+    {
+        for (uint64_t i = 0; i < memmap_request.response->entry_count; i++)
+        {
             struct limine_memmap_entry *e = memmap_request.response->entries[i];
             if (e->type == LIMINE_MEMMAP_USABLE)
                 nexus_total_ram += e->length;
@@ -384,8 +391,15 @@ void kmain(void)
     }
 
     terminal_write("NexusOS v0.1\n\n");
+    auth_login();
     shell_init();
 
-    while (1)
+    while (1) {
         __asm__ volatile("hlt");
+        if (auth_key_ready) {
+            char c = auth_key;
+            auth_key_ready = 0;
+            shell_handle_key(c);
+        }
+    }
 }
