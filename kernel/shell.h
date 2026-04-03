@@ -530,7 +530,7 @@ static void shell_execute(const char *line)
     {
         gui_run();
         // redraw shell prompt when returning
-        terminal_write("NexusOS v0.2.0\n");
+        terminal_write("NexusOS v1.2.0\n");
         shell_prompt();
     }
     else
