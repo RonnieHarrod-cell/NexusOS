@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include "io.h"
 
 // ---------------------------------------------------------------------------
 // PS/2 Mouse Driver
@@ -20,6 +21,8 @@ static uint8_t mouse_packet[3];
 // Bounds for mouse (set to framebuffer size in gui_init)
 static int mouse_max_x = 800;
 static int mouse_max_y = 600;
+
+static volatile int mouse_ready = 0;
 
 static void mouse_wait_write(void)
 {
@@ -55,41 +58,116 @@ static void mouse_init(int max_x, int max_y)
     mouse_max_y = max_y;
     mouse_x = max_x / 2;
     mouse_y = max_y / 2;
+    mouse_ready = 0;
 
-    // Enable auxiliary device
-    mouse_wait_write();
-    outb(0x64, 0xA8);
+    // flush any pending data
+    while (inb(0x64) & 0x01)
+        inb(0x60);
 
-    // Enable interrupts for mouse (IRQ12)
-    mouse_wait_write();
+    // disable both devices during init
+    outb(0x64, 0xAD); // disable keyboard
+    for (volatile int i = 0; i < 10000; i++)
+        ;
+    outb(0x64, 0xA7); // disable mouse
+    for (volatile int i = 0; i < 10000; i++)
+        ;
+
+    // flush again
+    while (inb(0x64) & 0x01)
+        inb(0x60);
+
+    // read and modify controller config
     outb(0x64, 0x20);
     mouse_wait_read();
-    uint8_t status = inb(0x60) | 2;
-    mouse_wait_write();
+    uint8_t config = inb(0x60);
+    config |= 0x01;  // enable keyboard interrupt
+    config |= 0x02;  // enable mouse interrupt
+    config &= ~0x20; // clear mouse disable bit
     outb(0x64, 0x60);
     mouse_wait_write();
-    outb(0x60, status);
+    outb(0x60, config);
 
-    // Set defaults
+    // re-enable keyboard
+    outb(0x64, 0xAE);
+    for (volatile int i = 0; i < 10000; i++)
+        ;
+
+    // re-enable mouse
+    outb(0x64, 0xA8);
+    for (volatile int i = 0; i < 10000; i++)
+        ;
+
+    // reset mouse
+    mouse_write(0xFF);
+    mouse_wait_read();
+    uint8_t ack = inb(0x60); // should be 0xFA
+    if (ack != 0xFA)
+        return; // no mouse present
+    mouse_wait_read();
+    inb(0x60); // 0xAA (self test passed)
+    mouse_wait_read();
+    inb(0x60); // 0x00 (mouse ID)
+
+    // set defaults
     mouse_write(0xF6);
-    mouse_read(); // ACK
+    mouse_wait_read();
+    inb(0x60); // ACK
+
+    // set sample rate to 40
+    mouse_write(0xF3);
+    mouse_wait_read();
+    inb(0x60);
+    mouse_write(40);
+    mouse_wait_read();
+    inb(0x60);
+
+    // set resolution to 4 couts/mm
+    mouse_write(0xE8);
+    mouse_wait_read(); inb(0x60); // ACK
+    mouse_write(0x02);
+    mouse_wait_read(); inb(0x60); //ACK
+
+    // set scaling to 1:1
+    mouse_write(0xE6);
+    mouse_wait_read(); inb(0x60); // ACK
 
     // Enable data reporting
     mouse_write(0xF4);
-    mouse_read(); // ACK
+    mouse_wait_read();
+    inb(0x60); // ACK
+
+    mouse_ready = 1;
 }
 
 // Call from IRQ12 handler (vector 44)
-static void mouse_handle_irq(void)
+__attribute__((no_caller_saved_registers)) static void mouse_handle_irq(void)
 {
+    if (!mouse_ready)
+    {
+        inb(0x60);
+        return;
+    }
+
+    uint8_t status = inb(0x64);
+
+    if (!(status & 0x20))
+        return;
+
     uint8_t data = inb(MOUSE_PORT_DATA);
+
+    // temporary: tack if getting any data
+    static int packet_count = 0;
+    packet_count++;
 
     switch (mouse_cycle)
     {
     case 0:
         // First byte: flags
         if (!(data & 0x08))
+        {
+            mouse_cycle = 0;
             return; // bit 3 must be set
+        }
         mouse_packet[0] = data;
         mouse_cycle++;
         break;

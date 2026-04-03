@@ -107,6 +107,7 @@ static void cmd_help(void)
     terminal_write("  clear              - clear the screen\n");
     terminal_write("  sysinfo            - show CPU and RAM info\n");
     terminal_write("  osinfo             - show OS version info\n");
+    terminal_write("  gui                - launch graphical desktop\n");
 }
 
 static void cmd_ls(const char *path)
@@ -437,7 +438,7 @@ static void cmd_osinfo(void)
     terminal_write("OS Name:       NexusOS\n");
     terminal_write("Version:       0.2.0\n");
     terminal_write("Release date:  2026-04-02\n");
-    terminal_write("Creator:       Ronnie Harrod\n");
+    terminal_write("Creator:       Ronnie Harrod & Romeo Walsh\n");
     terminal_write("Architecture:  x86_64\n");
     terminal_write("Bootloader:    Limine v7\n");
     terminal_write("Filesystem:    Ramdisk\n");
@@ -524,6 +525,13 @@ static void shell_execute(const char *line)
     else if (rd_strcmp(line, "osinfo") == 0)
     {
         cmd_osinfo();
+    }
+    else if (rd_strcmp(line, "gui") == 0)
+    {
+        gui_run();
+        // redraw shell prompt when returning
+        terminal_write("NexusOS v0.2.0\n");
+        shell_prompt();
     }
     else
     {

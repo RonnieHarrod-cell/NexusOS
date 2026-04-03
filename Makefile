@@ -8,7 +8,7 @@ LDFLAGS = -T linker.ld
 
 all: iso
 
-kernel.elf: boot.o main.o
+kernel.elf: boot.o main.o io.o
 	$(LD) $(LDFLAGS) -o $@ $^
 
 boot.o:
@@ -16,6 +16,9 @@ boot.o:
 
 main.o:
 	$(CC) $(CFLAGS) -c kernel/main.c -o main.o
+
+io.o:
+	$(CC) $(CFLAGS) -c kernel/io.c -o io.o
 
 iso: kernel.elf
 	mkdir -p iso/boot

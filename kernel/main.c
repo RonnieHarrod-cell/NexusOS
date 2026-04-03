@@ -3,6 +3,14 @@
 #include "font.h"
 #include "auth.h"
 #include "splash.h"
+#include "mouse.h"
+#include "gui.h"
+#include "io.h"
+
+__attribute__((used, section(".limine_requests"))) static volatile struct limine_memmap_request memmap_request = {
+    .id = LIMINE_MEMMAP_REQUEST,
+    .revision = 0,
+};
 
 volatile char auth_key = 0;
 volatile int auth_key_ready = 0;
@@ -29,31 +37,16 @@ void *memcpy(void *dst, const void *src, __SIZE_TYPE__ n)
 // ---------------------------------------------------------------------------
 // Framebuffer globals
 // ---------------------------------------------------------------------------
-static uint32_t *fb;
-static uint32_t fb_width;
-static uint32_t fb_height;
-static uint32_t fb_pitch;
+uint32_t *fb;
+uint32_t fb_width;
+uint32_t fb_height;
+uint32_t fb_pitch;
 
 static int cursor_x = 0;
 static int cursor_y = 0;
 
 #define CHAR_WIDTH 8
 #define CHAR_HEIGHT 8
-
-// ---------------------------------------------------------------------------
-// Port I/O
-// ---------------------------------------------------------------------------
-static inline uint8_t inb(uint16_t port)
-{
-    uint8_t ret;
-    __asm__ volatile("inb %1, %0" : "=a"(ret) : "Nd"(port));
-    return ret;
-}
-
-static inline void outb(uint16_t port, uint8_t val)
-{
-    __asm__ volatile("outb %0, %1" : : "a"(val), "Nd"(port));
-}
 
 // ---------------------------------------------------------------------------
 // IDT
@@ -116,8 +109,8 @@ static void pic_init(void)
     outb(0x21, 0x01);
     outb(0xA1, 0x01);
     // Mask all IRQs except IRQ1 (keyboard) on master; mask all on slave
-    outb(0x21, 0xFD); // 1111 1101
-    outb(0xA1, 0xFF);
+    outb(0x21, 0xF9); // 1111 1001 — unmask IRQ1 (keyboard) and IRQ2 (cascade)
+    outb(0xA1, 0xEF); // 1110 1111 — unmask IRQ12 on slave
 }
 
 // ---------------------------------------------------------------------------
@@ -239,6 +232,14 @@ __attribute__((interrupt)) static void keyboard_isr(struct interrupt_frame *fram
     outb(0x20, 0x20);
 }
 
+__attribute__((interrupt)) static void mouse_isr(struct interrupt_frame *frame)
+{
+    (void)frame;
+    mouse_handle_irq();
+    outb(0xA0, 0x20); // EOI to slave PIC
+    outb(0x20, 0x20); // EOI to master PIC
+}
+
 // ---------------------------------------------------------------------------
 // Limine requests
 // ---------------------------------------------------------------------------
@@ -308,6 +309,10 @@ void terminal_putchar(char c)
                 put_pixel(cursor_x + col, cursor_y + row, 0x000000);
         return;
     }
+    if (c >= 'a' && c <= 'z')
+    {
+        c -= 32;
+    }
     if (c == '\n')
     {
         cursor_x = 0;
@@ -315,10 +320,6 @@ void terminal_putchar(char c)
     }
     else
     {
-        if (c >= 'a' && c <= 'z')
-        {
-            c -= 32;
-        }
         draw_char(cursor_x, cursor_y, c, 0xFFFFFF);
         cursor_x += CHAR_WIDTH;
         if (cursor_x + CHAR_WIDTH > (int)fb_width)
@@ -351,33 +352,24 @@ uint64_t nexus_total_ram = 0;
 // ---------------------------------------------------------------------------
 void kmain(void)
 {
-    // Get framebuffer from Limine
     fb = fb_request.response->framebuffers[0]->address;
     fb_width = fb_request.response->framebuffers[0]->width;
     fb_height = fb_request.response->framebuffers[0]->height;
     fb_pitch = fb_request.response->framebuffers[0]->pitch;
-
-    __attribute__((used, section(".limine_requests"))) static volatile struct limine_memmap_request memmap_request = {
-        .id = LIMINE_MEMMAP_REQUEST,
-        .revision = 0,
-    };
 
     // Clear screen
     for (uint32_t y = 0; y < fb_height; y++)
         for (uint32_t x = 0; x < fb_pitch / 4; x++)
             fb[y * (fb_pitch / 4) + x] = 0x000000;
 
-    // Set up PIC before touching the IDT
     pic_init();
 
-    // Fill IDT with stub handlers
     for (int i = 0; i < 256; i++)
         set_idt_entry(i, isr_stub);
 
-    // Install keyboard handler on vector 33 (IRQ1)
     set_idt_entry(33, keyboard_isr);
+    set_idt_entry(44, mouse_isr);
 
-    // Load IDT, then enable interrupts
     load_idt();
     __asm__ volatile("sti");
 
@@ -392,14 +384,15 @@ void kmain(void)
     }
 
     splash_show();
-
     terminal_write("NexusOS v0.2.0\n\n");
     auth_login();
     shell_init();
 
-    while (1) {
+    while (1)
+    {
         __asm__ volatile("hlt");
-        if (auth_key_ready) {
+        if (auth_key_ready)
+        {
             char c = auth_key;
             auth_key_ready = 0;
             shell_handle_key(c);
