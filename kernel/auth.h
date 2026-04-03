@@ -100,7 +100,7 @@ static void auth_login(void)
             auth_delay();
             // clear screen
             for (int i = 0; i < 60; i++) terminal_putchar('\n');
-            return; // success - continue to shell
+            return; // success - continue to shell.
         }
 
         attempts++;
