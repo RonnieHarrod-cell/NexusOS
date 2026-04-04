@@ -384,7 +384,7 @@ void kmain(void)
     }
 
     splash_show();
-    terminal_write("NexusOS v0.3.0-alpha\n\n");
+    terminal_write("NexusOS v0.4.0-alpha\n\n");
     auth_login();
     shell_init();
 

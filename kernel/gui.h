@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include "mouse.h"
 #include "io.h"
+#include "ramdisk.h"
 
 extern uint32_t *fb;
 extern uint32_t fb_width;
@@ -41,6 +42,7 @@ extern volatile int auth_key_ready;
 #define RESIZE_HIT 8
 #define WIN_MIN_W 150
 #define WIN_MIN_H 80
+#define WIN_FILES 2
 
 static void gui_pixel(int x, int y, uint32_t col)
 {
@@ -415,7 +417,7 @@ static int gui_launcher_open = 0;
 #define LAUNCHER_H 160
 #define LAUNCHER_X 8
 #define LAUNCHER_ITEMS 4
-static const char *launcher_items[LAUNCHER_ITEMS] = {"TERMINAL", "SYSINFO", "OSINFO", "CLOSE GUI"};
+static const char *launcher_items[LAUNCHER_ITEMS] = {"TERMINAL", "SYSINFO", "FILES", "CLOSE GUI"};
 static int launcher_sel = 0;
 
 static void gui_draw_launcher(void)
@@ -505,7 +507,7 @@ static void gui_draw_sysinfo(void)
     gui_win_t *w = &gui_windows[WIN_SYSINFO];
     win_draw_chrome(w);
     int tx = w->x + 16, ty = w->y + TITLEBAR_H + 10;
-    gui_text(tx, ty, "OS:    NEXUSOS V0.2.0", COL_TEXT);
+    gui_text(tx, ty, "OS:    NEXUSOS V0.4.0-alpha", COL_TEXT);
     gui_text(tx, ty + 18, "ARCH:  X86_64", COL_BLUE);
     gui_text(tx, ty + 36, "BOOT:  LIMINE V7", COL_TEXT);
     uint32_t ram_mb = (uint32_t)(nexus_total_ram / (1024 * 1024));
@@ -514,6 +516,147 @@ static void gui_draw_sysinfo(void)
     gui_text(tx + 56 + 48, ty + 54, " MB", COL_BLUE);
     gui_text(tx, ty + 72, "FS:    RAMDISK", COL_TEXT);
     gui_text(tx, ty + 90, "BY:    RONNIE & ROMEO", COL_TEXT_DIM);
+}
+
+#define FILES_ITEM_H 20
+#define FILES_MAX_VIS 16
+
+static int files_cwd = 0;
+static int files_sel = -1;
+static int files_scroll = 0;
+
+static void gui_draw_files(void)
+{
+    gui_win_t *w = &gui_windows[WIN_FILES];
+    win_draw_chrome(w);
+
+    int cx = w->x + 2, cy = w->y + TITLEBAR_H;
+    int cw = w->w - 4, ch = w->h - TITLEBAR_H - 2;
+    gui_rect(cx, cy, cw, ch, 0x1e1e1e);
+
+    // Path bar
+    gui_rect(cx, cy, cw, 16, 0x2a2a2a);
+    gui_rect_outline(cx, cy, cw, 16, COL_WIN_BD);
+
+    // build path string by walking up to root
+    char parts[16][RD_MAX_NAME];
+    int depth = 0, node = files_cwd;
+    while (node != 0 && depth < 16)
+    {
+        int i = 0;
+        while (rd_nodes[node].name[i] && i < RD_MAX_NAME - 1)
+            parts[depth][i] = rd_nodes[node].name[i++];
+        parts[depth][i] = '\0';
+        depth++;
+        node = rd_nodes[node].parent;
+    }
+    char path[256];
+    int pi = 0;
+    path[pi++] = '/';
+    for (int i = depth - 1; i >= 0 && pi < 250; i--)
+    {
+        int j = 0;
+        while (parts[i][j] && pi < 250)
+            path[pi++] = parts[i][j++];
+        if (i > 0)
+            path[pi++] = '/';
+    }
+    path[pi] = '\0';
+    gui_text(cx + 4, cy + 4, path, COL_TEXT_DIM);
+
+    // list area
+    int list_y = cy + 18;
+    int list_h = ch - 38; // 18 path bar + 20 status bar
+    gui_rect(cx, list_y, cw, list_h, 0x1e1e1e);
+
+    rd_node_t *dir = &rd_nodes[files_cwd];
+    int total = dir->num_children;
+    int show_back = (files_cwd != 0) ? 1 : 0;
+    int total_ent = total + show_back;
+    int visible = list_h / FILES_ITEM_H;
+    if (visible > FILES_MAX_VIS)
+        visible = FILES_MAX_VIS;
+    if (files_scroll > total_ent - visible)
+        files_scroll = total_ent - visible;
+    if (files_scroll < 0)
+        files_scroll = 0;
+
+    for (int i = 0; i < visible; i++)
+    {
+        int ei = i + files_scroll;
+        if (ei >= total_ent)
+            break;
+        int ey = list_y + i * FILES_ITEM_H;
+
+        if (ei == files_sel)
+            gui_rect(cx, ey, cw, FILES_ITEM_H, 0x2a4a6a);
+        for (int xx = cx; xx < cx + cw; xx++)
+            gui_pixel(xx, ey + FILES_ITEM_H - 1, 0x2a2a2a);
+
+        if (show_back && ei == 0)
+        {
+            gui_text(cx + 6, ey + 6, "^", COL_BLUE);
+            gui_text(cx + 24, ey + 6, "..", COL_TEXT_DIM);
+        }
+        else
+        {
+            int ci = ei - show_back;
+            if (ci < 0 || ci >= dir->num_children)
+                break;
+            rd_node_t *child = &rd_nodes[dir->children[ci]];
+            if (child->type == RD_DIR)
+            {
+                gui_text(cx + 6, ey + 6, "D", COL_BLUE);
+                gui_text(cx + 24, ey + 6, child->name, COL_BLUE);
+                gui_text(cx + cw - 40, ey + 6, "DIR", COL_TEXT_DIM);
+            }
+            else
+            {
+                gui_text(cx + 6, ey + 6, "F", COL_TEXT_DIM);
+                gui_text(cx + 24, ey + 6, child->name, COL_TEXT);
+                gui_int(cx + cw - 56, ey + 6, child->size, COL_TEXT_DIM);
+                gui_text(cx + cw - 56 + gui_strlen("999999") * 8, ey + 6, "B", COL_TEXT_DIM);
+            }
+        }
+    }
+
+    // scrollbar
+    if (total_ent > visible && visible > 0)
+    {
+        int sb_x = cx + cw - 4, sb_h = list_h;
+        gui_rect(sb_x, list_y, 4, sb_h, 0x2a2a2a);
+        int th = sb_h * visible / total_ent;
+        if (th < 8)
+            th = 8;
+        int ty2 = list_y + (sb_h - th) * files_scroll / (total_ent > visible ? total_ent - visible : 1);
+        gui_rect(sb_x, ty2, 4, th, COL_TEXT_DIM);
+    }
+
+    // Status bar
+    int sy = cy + ch - 20;
+    gui_rect(cx, sy, cw, 20, 0x2a2a2a);
+    gui_rect_outline(cx, sy, cw, 20, COL_WIN_BD);
+    if (files_sel >= 0 && files_sel < total_ent)
+    {
+        if (show_back && files_sel == 0)
+        {
+            gui_text(cx + 4, sy + 6, "Parent directory", COL_TEXT_DIM);
+        }
+        else
+        {
+            int ci = files_sel - show_back;
+            if (ci >= 0 && ci < dir->num_children)
+            {
+                rd_node_t *sel = &rd_nodes[dir->children[ci]];
+                gui_text(cx + 4, sy + 6, sel->name, sel->type == RD_DIR ? COL_BLUE : COL_TEXT);
+            }
+        }
+    }
+    else
+    {
+        gui_text(cx + 4, sy + 6, "Items:", COL_TEXT_DIM);
+        gui_int(cx + 56, sy + 6, (uint32_t)total, COL_TEXT_DIM);
+    }
 }
 
 static void gui_draw_desktop(void)
@@ -545,11 +688,13 @@ static void gui_run(void)
 
     win_init(WIN_TERM, "TERMINAL", 60, 60, 480, 280);
     win_init(WIN_SYSINFO, "SYSTEM INFO", 120, 100, 340, 200);
+    win_init(WIN_FILES, "FILES", 80, 50, 300, 340);
 
     gui_num_btns = 0;
     gui_btn_add(8, 80, "  APPS");
     gui_btn_add(96, 80, "TERMINAL");
     gui_btn_add(184, 70, "SYSINFO");
+    gui_btn_add(262, 60, "FILES");
 
     gui_term_clear();
     gui_term_write("NEXUSOS TERMINAL\n$ ");
@@ -645,6 +790,54 @@ static void gui_run(void)
             }
             if (!consumed)
             {
+                // Files navigation on click
+                if (gui_windows[WIN_FILES].open)
+                {
+                    gui_win_t *fw = &gui_windows[WIN_FILES];
+                    int fx = fw->x + 2, fy = fw->y + TITLEBAR_H + 18;
+                    int fh = fw->h - TITLEBAR_H - 38;
+                    if (cx >= fx && cx < fx + fw->w - 4 &&
+                        cy >= fy && cy < fy + fh)
+                    {
+                        int clicked = (cy - fy) / FILES_ITEM_H + files_scroll;
+                        rd_node_t *fdir = &rd_nodes[files_cwd];
+                        int fback = (files_cwd != 0) ? 1 : 0;
+                        int ftotal = fdir->num_children + fback;
+                        if (clicked < ftotal)
+                        {
+                            if (clicked == files_sel)
+                            {
+                                // Second click = navigate into dir
+                                if (fback && clicked == 0)
+                                {
+                                    files_cwd = rd_nodes[files_cwd].parent;
+                                    files_sel = -1;
+                                    files_scroll = 0;
+                                }
+                                else
+                                {
+                                    int fci = clicked - fback;
+                                    if (fci >= 0 && fci < fdir->num_children)
+                                    {
+                                        int fnidx = fdir->children[fci];
+                                        if (rd_nodes[fnidx].type == RD_DIR)
+                                        {
+                                            files_cwd = fnidx;
+                                            files_sel = -1;
+                                            files_scroll = 0;
+                                        }
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                files_sel = clicked;
+                            }
+                            needs_redraw = 1;
+                        }
+                    }
+                }
+
                 for (int i = 0; i < gui_num_btns; i++)
                 {
                     if (gui_btn_hit(i, cx, cy))
@@ -659,6 +852,11 @@ static void gui_run(void)
                         if (i == 2)
                         {
                             gui_windows[WIN_SYSINFO].open = !gui_windows[WIN_SYSINFO].open;
+                            gui_launcher_open = 0;
+                        }
+                        if (i == 3)
+                        {
+                            gui_windows[WIN_FILES].open = !gui_windows[WIN_FILES].open;
                             gui_launcher_open = 0;
                         }
                         needs_redraw = 1;
@@ -678,6 +876,8 @@ static void gui_run(void)
                                 gui_windows[WIN_TERM].open = 1;
                             if (i == 1)
                                 gui_windows[WIN_SYSINFO].open = 1;
+                            if (i == 2)
+                                gui_windows[WIN_FILES].open = 1;
                             if (i == 3)
                             {
                                 for (int j = 0; j < 60; j++)
@@ -734,6 +934,8 @@ static void gui_run(void)
                 gui_draw_sysinfo();
             if (gui_windows[WIN_TERM].open)
                 gui_draw_term();
+            if (gui_windows[WIN_FILES].open)
+                gui_draw_files();
             if (gui_launcher_open)
                 gui_draw_launcher();
             gui_draw_cursor(cx, cy);
